@@ -1,0 +1,66 @@
+将gensim训练好的文件读入TensorFlow的变量并保存在TensorFlow的graph中
+
+    1、将gensim训练好的bin文件转为txt文件
+        model = KeyedVectors.load_word2vec_format('xx.bin', binary=True)
+        model.save_word2vec_format('vectors.txt', binary=False)
+
+    2、将文件通过numpy加载至数组，对TensorFlow的变量进行初始化
+        embedding_array = np.loadtxt('vectors.txt', dtype=np.float32, encoding='utf-8')  
+            
+        with tf.name_scope("word_dic_embedding"):
+            self._word_embeddings = tf.Variable(embedding_array, dtype=tf.float32, name="_word_embeddings", trainable=False)
+
+    3、鉴于文件很大，numpy加载速度很慢，不利于每次重复训练，故step2仅第一次训练时使用，将graph进行保存
+        if self.saver is None:
+            # self.saver = tf.train.Saver(tf.global_variables())
+            self.saver = tf.train.Saver()
+        注释代码可能会引发错误：
+        FailedPreconditionError (see above for traceback): Failed to rename: ./model/model_1/1/model.ckpt.data-00000-of-00001.tempstate8413703636410277913 to: ./model/model_1/1/model.ckpt.data-00000-of-00001 : The process cannot access the file because it is being used by another process.
+        具体错误原因我也不清楚
+
+    4、保存成功后，重新加载模型，此时可以对self._word_embeddings 进行随机初始化，再restore即可
+        array = np.random.uniform(low=-0.25, high=0.25, size=[6115354, 64])
+
+        # 样本和标记的占位符
+        with tf.name_scope("word_dic_embedding"):
+            self._word_embeddings = tf.Variable(array, dtype=tf.float32,
+                                                name="_word_embeddings", trainable=False)
+
+        ...
+
+        saver.restore(sess, model_path)  即可加载成功，且速度远快于 np.loadtxt()
+    
+    5、当要把模型导出成serving模型，可能出现相同问题：
+        Failed Precondition:failed to rename ...
+        解决：
+        删除导出模型路径中的 checkpoint 文件
+
+
+
+
+利用TensorFlow 对 query进行 word (in query)的 id 查询
+    import tensorflow as tf
+    from tensorflow.contrib import lookup
+    from distutils.version import LooseVersion
+    import sys
+    import sonoma as sn
+
+
+    #文件是一列单词，用来进行单词id的索引，单词编号从0开始，通常0对应的单词为'<UNK>'，对应default_value=0
+    vocab_file = "assets/vocabulary.txt"  
+
+    table = None
+    query = tf.Variable("string", name="query")
+
+    if LooseVersion(tf.__version__) >= LooseVersion("1.1"):
+        table = lookup.index_table_from_file(vocabulary_file=vocab_file)
+    elif LooseVersion(tf.__version__) >= LooseVersion("1.0"):
+        table = lookup.string_to_index_table_from_file(vocabulary_file=vocab_file, default_value=0)
+    else:
+        assert LooseVersion(tf.__version__) >= LooseVersion("1.0")
+
+    indices = table.lookup(tf.string_split([query], ",").values)
+
+
+
+
